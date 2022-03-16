@@ -33,19 +33,20 @@ services:
       - back-tier
 
   db:
-    image: postgres
+    image: postgres:14.0
     restart: always
     environment:
       - WORKER_HOSTNAME=worker
       - RESULT_HOSTNAME=result
       - POSTGRES_PASSWORD=password
       - POSTGRES_USER=postgres
+      - POSTGRES_DB=postgres  
     networks:
       - result-tier
       - back-tier
     volumes:
       - db-data:/var/lib/postgresql/data
-      - "./schema.sql:/docker-entrypoint-initdb.d/init.sql"
+      - "./schema.sql:/docker-entrypoint-initdb.d/schema.sql"
 
   result:
     build: ./result
