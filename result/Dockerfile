@@ -1,5 +1,10 @@
-FROM node:12-alpine
-COPY ..
-RUN npm install
-EXPOSE 80
+FROM node:22-alpine
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY . .
+
+USER node
+EXPOSE 8080
 CMD ["node", "server.js"]

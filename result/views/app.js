@@ -1,5 +1,5 @@
 var app = angular.module('poll-app', []);
-var socket = io.connect({transports:['polling']});
+var socket = io();
 
 var bg1 = document.getElementById('background-stats-1');
 var bg2 = document.getElementById('background-stats-2');
