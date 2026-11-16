@@ -1,27 +1,36 @@
 package worker;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import org.json.JSONObject;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.exceptions.JedisConnectionException;
-import java.sql.*;
-import org.json.JSONObject;
 
 class Worker {
   public static void main(String[] args) {
+    String redisHost = env("REDIS_HOST", "localhost");
+    String dbHost = env("DB_HOST", "localhost");
+    String dbName = env("POSTGRES_DB", "postgres");
+    String dbUser = env("POSTGRES_USER", "postgres");
+    String dbPassword = env("POSTGRES_PASSWORD", "password");
+
     try {
-        Jedis redis = connectToRedis("127.0.0.1");
-        Connection dbConn = connectToDB("127.0.0.1");
+      Jedis redis = connectToRedis(redisHost);
+      Connection dbConn = connectToDB(dbHost, dbName, dbUser, dbPassword);
 
-        System.err.println("Watching vote queue");
+      System.err.println("Watching vote queue");
 
-        while (true) {
-            String voteJSON = redis.blpop(0, "votes").get(1);
-            JSONObject voteData = new JSONObject(voteJSON);
-            String voterID = voteData.getString("voter_id");
-            String vote = voteData.getString("vote");
+      while (true) {
+        String voteJSON = redis.blpop(0, "votes").get(1);
+        JSONObject voteData = new JSONObject(voteJSON);
+        String voterID = voteData.getString("voter_id");
+        String vote = voteData.getString("vote");
 
-            System.err.printf("Processing vote for '%s' by '%s'\n", vote, voterID);
-            updateVote(dbConn, voterID, vote);
-        }
+        System.err.printf("Processing vote for '%s' by '%s'%n", vote, voterID);
+        updateVote(dbConn, voterID, vote);
+      }
     } catch (SQLException e) {
       e.printStackTrace();
       System.exit(1);
@@ -29,28 +38,20 @@ class Worker {
   }
 
   static void updateVote(Connection dbConn, String voterID, String vote) throws SQLException {
-    PreparedStatement insert = dbConn.prepareStatement(
-      "INSERT INTO votes (id, vote) VALUES (?, ?)");
-    insert.setString(1, voterID);
-    insert.setString(2, vote);
-
-    try {
-      insert.executeUpdate();
-    } catch (SQLException e) {
-      PreparedStatement update = dbConn.prepareStatement(
-        "UPDATE votes SET vote = ? WHERE id = ?");
-      update.setString(1, vote);
-      update.setString(2, voterID);
-      update.executeUpdate();
+    try (PreparedStatement upsert = dbConn.prepareStatement(
+        "INSERT INTO votes (id, vote) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET vote = EXCLUDED.vote")) {
+      upsert.setString(1, voterID);
+      upsert.setString(2, vote);
+      upsert.executeUpdate();
     }
   }
 
   static Jedis connectToRedis(String host) {
-    Jedis conn = new Jedis(host);
+    Jedis conn = new Jedis(host, 6379);
 
     while (true) {
       try {
-        conn.keys("*");
+        conn.ping();
         break;
       } catch (JedisConnectionException e) {
         System.err.println("Waiting for redis");
@@ -62,30 +63,26 @@ class Worker {
     return conn;
   }
 
-  static Connection connectToDB(String host) throws SQLException {
+  static Connection connectToDB(String host, String name, String user, String password) {
+    String url = "jdbc:postgresql://" + host + "/" + name;
     Connection conn = null;
 
-    try {
-
-      Class.forName("org.postgresql.Driver");
-      String url = "jdbc:postgresql://" + host + "/postgres";
-
-      while (conn == null) {
-        try {
-            conn = DriverManager.getConnection(url, "postgres", "password");
-        } catch (SQLException e) {
-          System.err.println("Waiting for db");
-          sleep(1000);
-        }
+    while (conn == null) {
+      try {
+        conn = DriverManager.getConnection(url, user, password);
+      } catch (SQLException e) {
+        System.err.println("Waiting for db");
+        sleep(1000);
       }
-
-    } catch (ClassNotFoundException e) {
-      e.printStackTrace();
-      System.exit(1);
     }
 
     System.err.println("Connected to db");
     return conn;
+  }
+
+  static String env(String name, String fallback) {
+    String value = System.getenv(name);
+    return value == null || value.isEmpty() ? fallback : value;
   }
 
   static void sleep(long duration) {
