@@ -1,5 +1,12 @@
-FROM python:3
-COPY ..
-RUN pip3 install -r requirements.txt
-EXPOSE 80
-CMD ["flask", "run", "--host=0.0.0.0", "--port=80"]
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+RUN useradd --system --uid 10001 app
+USER app
+
+EXPOSE 8080
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "app:app"]
