@@ -1,68 +1,84 @@
-version: "3"
+name: popeye
+
+x-db-credentials: &db-credentials
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+  POSTGRES_DB: ${POSTGRES_DB:-postgres}
+
 services:
 
   poll:
     build: ./poll
-    restart: always
-    depends_on:
-      - redis
-    ports:
-      - "5000:80"
+    restart: unless-stopped
     environment:
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=postgres
+      REDIS_HOST: redis
+    ports:
+      - "5000:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - poll-tier
 
   redis:
-    image: redis
-    restart: always
-    ports:
-      - "6379:6379"
-    environment:
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=postgres
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - poll-tier
       - back-tier
 
   worker:
     build: ./worker
-    restart: always
+    restart: unless-stopped
     environment:
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=postgres
+      <<: *db-credentials
+      REDIS_HOST: redis
+      DB_HOST: db
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
     networks:
       - back-tier
 
   db:
-    image: postgres:14.0
-    restart: always
+    image: postgres:14.13-alpine
+    restart: unless-stopped
     environment:
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=postgres  
+      <<: *db-credentials
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     networks:
       - result-tier
       - back-tier
-    volumes:
-      - db-data:/var/lib/postgresql/data
-      - "./schema.sql:/docker-entrypoint-initdb.d/schema.sql"
 
   result:
     build: ./result
-    restart: always
-    ports:
-      - "5001:80"
+    restart: unless-stopped
     environment:
-      - DB_HOSTNAME=db
+      <<: *db-credentials
+      DB_HOST: db
+    ports:
+      - "5001:8080"
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - result-tier
 
-networks:  
+networks:
   poll-tier:
   result-tier:
   back-tier:
